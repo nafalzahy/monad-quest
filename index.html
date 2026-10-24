@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Monad Quest</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;font-family:system-ui,sans-serif;color:#fff;
+    background:radial-gradient(circle at 20% 0%,#2a1d5e,transparent 50%),radial-gradient(circle at 90% 100%,#3b1f6b,transparent 45%),#0e0a1a;padding:24px 14px 60px}
+  .wrap{max-width:520px;margin:auto;text-align:center}
+  h1{margin:0;font-size:30px}.sub{color:#a79bd6;margin:4px 0 18px}
+  .card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:18px;margin:14px 0;backdrop-filter:blur(8px)}
+  button{border:0;border-radius:12px;background:#836ef9;color:#fff;font-size:16px;padding:12px 22px;cursor:pointer}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  #orb{width:170px;height:170px;border-radius:50%;font-size:64px;margin:14px auto;display:block;padding:0;
+    background:radial-gradient(circle at 30% 30%,#c9bfff,#836ef9 55%,#4a34c9);box-shadow:0 0 50px #836ef988;animation:pulse 2.4s infinite}
+  #orb:active:not(:disabled){transform:scale(.93)}
+  @keyframes pulse{50%{box-shadow:0 0 80px #836ef9cc}}
+  .bar{height:14px;border-radius:99px;background:#ffffff18;overflow:hidden;margin:10px 0}
+  #bar{height:100%;width:0;background:linear-gradient(90deg,#836ef9,#7df9ff);transition:width .5s}
+  #lvl{font-size:22px;font-weight:700}.small{color:#a79bd6;font-size:14px}
+  .badges{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .slot{aspect-ratio:1;border-radius:14px;background:#ffffff0d;display:flex;align-items:center;justify-content:center;font-size:13px;color:#8b80b8;overflow:hidden}
+  .slot img{width:100%;height:100%}
+  .row{display:flex;justify-content:space-between;padding:8px 4px;border-bottom:1px solid #ffffff12;font-size:15px}
+  .me{color:#7df9ff;font-weight:700}
+  #modal{position:fixed;inset:0;background:#000c;display:none;align-items:center;justify-content:center;z-index:9}
+  #modal>div{background:#1a1330;border-radius:24px;padding:24px;max-width:320px;animation:pop .4s}
+  #modal img{width:100%;border-radius:16px}
+  @keyframes pop{from{transform:scale(.6);opacity:0}}
+  .conf{position:fixed;top:-30px;font-size:26px;z-index:10;animation:fall 2.2s linear forwards}
+  @keyframes fall{to{transform:translateY(110vh) rotate(540deg)}}
+  a{color:#c9bfff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🟣 Monad Quest</h1>
+  <div class="sub">Klik, naik level, dapatkan NFT badge on-chain!</div>
+  <button id="connectBtn">Connect Wallet</button>
+  <div class="small" id="account" style="margin-top:8px"></div>
+
+  <div class="card">
+    <div id="lvl">Level 1 · Rookie</div>
+    <div class="small"><span id="xp">0</span> XP</div>
+    <div class="bar"><div id="bar"></div></div>
+    <div class="small" id="next">Connect wallet untuk mulai</div>
+    <button id="orb" disabled>⚡</button>
+    <div class="small" id="status"></div>
+  </div>
+
+  <div class="card"><b>🏅 Koleksi NFT</b>
+    <div class="badges" id="badges" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card"><b>🏆 Top 5 Pemain</b>
+    <div id="board" style="margin-top:8px"><div class="small">Belum ada pemain</div></div>
+  </div>
+</div>
+
+<div id="modal"><div>
+  <h2 id="mTitle">LEVEL UP!</h2>
+  <img id="mImg" />
+  <p class="small">NFT badge sudah masuk ke wallet kamu 🎉</p>
+  <button onclick="document.getElementById('modal').style.display='none'">Lanjut main</button>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script>
+const CONTRACT_ADDRESS = "0x41a5DD6E8D3e6F0c01eB954578692Bc2813c32E3";
+const ABI = [
+  "function click()",
+  "function xp(address) view returns (uint256)",
+  "function levelOf(uint256) pure returns (uint8)",
+  "function nextLevelXp(uint256) pure returns (uint256)",
+  "function badgeOf(address,uint8) view returns (uint256)",
+  "function tokenURI(uint256) view returns (string)",
+  "function getLeaderboard() view returns (address[5], uint256[5])"
+];
+const CHAIN = {chainId:"0x279F",chainName:"Monad Testnet",
+  nativeCurrency:{name:"Monad",symbol:"MON",decimals:18},
+  rpcUrls:["https://testnet-rpc.monad.xyz"],blockExplorerUrls:["https://testnet.monadvision.com"]};
+const NAMES=["","Rookie","Bronze","Silver","Gold","Diamond"], TH=[0,0,3,10,20,35];
+
+let c, me, curLv = 1, timer; const imgCache = {};
+const $ = id => document.getElementById(id);
+const short = a => a.slice(0,6)+"..."+a.slice(-4);
+
+async function nft(id){
+  if(imgCache[id]) return imgCache[id];
+  const uri = await c.tokenURI(id);
+  return imgCache[id] = JSON.parse(atob(uri.split(",")[1])).image;
+}
+
+async function connect(){
+  try{
+    if(!window.ethereum) return alert("Install MetaMask dulu!");
+    await ethereum.request({method:"eth_requestAccounts"});
+    try{ await ethereum.request({method:"wallet_switchEthereumChain",params:[{chainId:CHAIN.chainId}]}); }
+    catch(e){ if(e.code===4902) await ethereum.request({method:"wallet_addEthereumChain",params:[CHAIN]}); else throw e; }
+    const signer = await new ethers.BrowserProvider(ethereum).getSigner();
+    me = await signer.getAddress();
+    c = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    $("account").textContent = "Terhubung: "+short(me);
+    $("connectBtn").textContent = "Terhubung ✅";
+    $("orb").disabled = false;
+    await refresh();
+    clearInterval(timer); timer = setInterval(refresh, 8000);
+  }catch(e){ $("status").textContent = "Gagal connect: "+(e.shortMessage||e.message); }
+}
+
+async function refresh(){
+  try{
+    const x = Number(await c.xp(me));
+    curLv = Number(await c.levelOf(x));
+    const nx = Number(await c.nextLevelXp(x));
+    $("lvl").textContent = `Level ${curLv} · ${NAMES[curLv]}`;
+    $("xp").textContent = x;
+    $("bar").style.width = (nx ? (x-TH[curLv])/(nx-TH[curLv])*100 : 100)+"%";
+    $("next").textContent = nx ? `${nx-x} klik lagi → NFT ${NAMES[curLv+1]}` : "Level maksimal! Kamu legenda 💎";
+
+    let html = "";
+    for(let l=2;l<=5;l++){
+      const id = Number(await c.badgeOf(me,l));
+      html += id ? `<div class="slot"><img src="${await nft(id)}"></div>` : `<div class="slot">🔒 Lv ${l}</div>`;
+    }
+    $("badges").innerHTML = html;
+
+    const [addrs, scores] = await c.getLeaderboard();
+    let rows = "";
+    addrs.forEach((a,i)=>{ if(scores[i] > 0n) rows += `<div class="row ${a.toLowerCase()===me.toLowerCase()?"me":""}"><span>${i+1}. ${short(a)}</span><span>${scores[i]} XP</span></div>`; });
+    if(rows) $("board").innerHTML = rows;
+  }catch(e){ console.error(e); }
+}
+
+function confetti(){
+  for(let i=0;i<40;i++){
+    const s = document.createElement("span");
+    s.className = "conf"; s.textContent = ["🎉","✨","🟣","💎"][i%4];
+    s.style.left = Math.random()*100+"vw"; s.style.animationDelay = Math.random()*.8+"s";
+    document.body.appendChild(s); setTimeout(()=>s.remove(), 3500);
+  }
+}
+
+async function play(){
+  const prev = curLv;
+  try{
+    $("orb").disabled = true;
+    $("status").textContent = "Konfirmasi di wallet...";
+    const tx = await c.click();
+    $("status").innerHTML = `Memproses... <a href="https://testnet.monadvision.com/tx/${tx.hash}" target="_blank">lihat tx</a>`;
+    await tx.wait();
+    await refresh();
+    $("status").textContent = "+1 XP ✅";
+    if(curLv > prev){
+      const id = Number(await c.badgeOf(me, curLv));
+      $("mTitle").textContent = `LEVEL UP! ${NAMES[curLv]}`;
+      $("mImg").src = await nft(id);
+      $("modal").style.display = "flex"; confetti();
+    }
+  }catch(e){ $("status").textContent = "Gagal: "+(e.shortMessage||e.message); }
+  finally{ $("orb").disabled = false; }
+}
+
+$("connectBtn").onclick = connect;
+$("orb").onclick = play;
+</script>
+</body>
+</html>
